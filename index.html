@@ -583,6 +583,8 @@ Challenge Requirements:
                         setAtsReadability(results.atsReadability);
                         setJdContradictions(results.jdContradictions || []);
                         setJdHasContradictions(Boolean(results.jdHasContradictions));
+                        setResumeFlags(results.resumeFlags || []);
+                        setResumeRiskLevel(results.resumeRiskLevel || 'NO MAJOR FLAGS');
 
                         if (!demoMode && results.candidateNameExtracted) {
                             setCandidateName(results.candidateNameExtracted);
@@ -680,6 +682,8 @@ Challenge Requirements:
                 setTargetRole('');
                 setJdContradictions([]);
                 setJdHasContradictions(false);
+                setResumeFlags([]);
+                setResumeRiskLevel('NOT ANALYZED');
                 setExtractedSkills([]);
                 setRequiredSkills([]);
                 setMissingSkills([]);
