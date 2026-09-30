@@ -157,11 +157,12 @@ PROJECTS:
 Predictive Analytics Pipeline
 • Designed a full-stack data ingestion script in Python and SQL to aggregate daily financial trends.
 • Utilized Scikit-Learn for random forest regression modeling and dynamic data visualization.`,
-            jobDescription: `Target Position: Junior Machine Learning Engineer
+            jobDescription: `Target Position: Senior Solution Architect
 Department: AI Solutions & Cloud Infrastructure
 
-Requirements:
-- Bachelor's or Master's degree in Computer Science, Data Science, or related technical field.
+Challenge Requirements:
+- Looking for a 5-year senior architect who can own system architecture and technical design.
+- This is also an entry-level opportunity for candidates who are willing to learn and grow.
 - Strong proficiency in Python, SQL, and foundational Machine Learning models (Scikit-Learn, PyTorch).
 - Hands-on experience developing web endpoints via FastAPI or Flask.
 - Experience with Cloud deployment platforms (AWS, GCP, or Azure) and containerization using Docker.
@@ -227,6 +228,10 @@ Requirements:
             const [targetRoleStatus, setTargetRoleStatus] = useState('NOT SET');
             const [candidateName, setCandidateName] = useState('');
             const [targetRole, setTargetRole] = useState('');
+
+            // Surprise-change / JD contradiction state
+            const [jdContradictions, setJdContradictions] = useState([]);
+            const [jdHasContradictions, setJdHasContradictions] = useState(false);
 
             // Extracted Metrics
             const [extractedSkills, setExtractedSkills] = useState([]);
@@ -344,6 +349,48 @@ Requirements:
                 </button>
             );
 
+            // Surprise Challenge: detect contradictory job-description requirements.
+            // The agent flags the conflict instead of silently selecting one interpretation.
+            const detectJDContradictions = (jText) => {
+                const text = String(jText || '');
+                const lower = text.toLowerCase();
+                const findings = [];
+
+                const seniorExperience =
+                    /\b(?:senior|lead|principal|architect)\b[^\n.]{0,100}\b(?:5|6|7|8|9|10)\+?\s*years?\b/i.test(text) ||
+                    /\b(?:5|6|7|8|9|10)\+?\s*years?\b[^\n.]{0,100}\b(?:senior|lead|principal|architect)\b/i.test(text);
+
+                const entrySignals = /\bentry[-\s]?level\b|\bjunior\b|\bwilling to learn\b|\bopen to learning\b|\bno prior experience\b/i.test(text);
+                const seniorTitle = text.match(/\b(?:senior|lead|principal)\s+(?:software|solution|systems?|technical|cloud|data|ml|machine learning)?\s*architect\b/i);
+                const architectTitle = /\barchitect\b/i.test(text);
+
+                if (seniorExperience && entrySignals) {
+                    findings.push({
+                        type: 'Seniority / Experience Conflict',
+                        evidence: 'The JD combines senior-level / multi-year experience language with entry-level or learning-oriented language.',
+                        action: 'Do not choose one interpretation. Preserve the conflict, ask for clarification, and tailor the resume only to verified experience.'
+                    });
+                }
+
+                if (seniorTitle && entrySignals) {
+                    findings.push({
+                        type: 'Role Level Conflict',
+                        evidence: `The role is described as "${seniorTitle[0]}" while the same JD also uses entry-level or junior language.`,
+                        action: 'Flag the role-level mismatch instead of treating the candidate as automatically senior.'
+                    });
+                }
+
+                if (architectTitle && entrySignals && findings.length === 0) {
+                    findings.push({
+                        type: 'Architecture / Level Conflict',
+                        evidence: 'The JD combines an architecture-level responsibility with entry-level or junior wording.',
+                        action: 'Keep the requirement transparent and avoid inventing senior architecture experience.'
+                    });
+                }
+
+                return { hasContradictions: findings.length > 0, items: findings };
+            };
+
             // Deterministic Skills & Keywords extractor (Local Engine)
             const analyzeTextLocally = (rText, jText) => {
                 const knownSkills = [
@@ -356,6 +403,7 @@ Requirements:
 
                 const lowerR = rText.toLowerCase();
                 const lowerJ = jText.toLowerCase();
+                const contradictionAnalysis = detectJDContradictions(jText);
 
                 const candSkills = knownSkills.filter(skill => lowerR.includes(skill.toLowerCase()));
                 const reqSkills = knownSkills.filter(skill => lowerJ.includes(skill.toLowerCase()));
@@ -393,7 +441,9 @@ Requirements:
                     skillCoverage: coverage,
                     atsReadability: atsVal,
                     targetRoleName: roleName,
-                    candidateNameExtracted: nameFound
+                    candidateNameExtracted: nameFound,
+                    jdContradictions: contradictionAnalysis.items,
+                    jdHasContradictions: contradictionAnalysis.hasContradictions
                 };
             };
 
@@ -409,7 +459,10 @@ Requirements:
                         const id = agentIds[currentStep];
                         setAgents(prev => prev.map(a => {
                             if (a.id === id) {
-                                return { ...a, status: 'running', progress: 50, log: 'Processing features in local engine...' };
+                                const contradictionNote = id === 'jd_analyst' && detectJDContradictions(jText).hasContradictions
+                                    ? 'Contradiction detected — seniority/experience requirements need clarification.'
+                                    : 'Processing features in local engine...';
+                                return { ...a, status: 'running', progress: 50, log: contradictionNote };
                             }
                             return a;
                         }));
@@ -417,7 +470,10 @@ Requirements:
                         setTimeout(() => {
                             setAgents(prev => prev.map(a => {
                                 if (a.id === id) {
-                                    return { ...a, status: 'complete', progress: 100, log: 'Analysis verified.' };
+                                    const contradictionNote = id === 'jd_analyst' && detectJDContradictions(jText).hasContradictions
+                                        ? 'Conflict flagged. No interpretation selected.'
+                                        : 'Analysis verified.';
+                                    return { ...a, status: 'complete', progress: 100, log: contradictionNote };
                                 }
                                 return a;
                             }));
@@ -437,6 +493,8 @@ Requirements:
                         setMatchScore(results.matchScore);
                         setSkillCoverage(results.skillCoverage);
                         setAtsReadability(results.atsReadability);
+                        setJdContradictions(results.jdContradictions || []);
+                        setJdHasContradictions(Boolean(results.jdHasContradictions));
 
                         if (!demoMode && results.candidateNameExtracted) {
                             setCandidateName(results.candidateNameExtracted);
@@ -463,6 +521,15 @@ Requirements:
                                 tag: "Technical Depth"
                             }
                         ];
+
+                        if (results.jdHasContradictions) {
+                            sampleBulletFixes.unshift({
+                                original: "Conflicting JD requirement: senior/architect-level experience + entry-level/willing-to-learn language.",
+                                optimized: "JD CONTRADICTION FLAG: Do not invent or imply senior experience. Tailor the resume to verified experience, highlight transferable architecture/design exposure, and explicitly acknowledge the entry-level/learning requirement until the employer clarifies the intended level.",
+                                tag: "JD Contradiction"
+                            });
+                        }
+
                         setOptimizedBullets(sampleBulletFixes);
 
                         // Generate Interview Questions
@@ -523,6 +590,8 @@ Requirements:
                 setTargetRoleStatus('NOT SET');
                 setCandidateName('');
                 setTargetRole('');
+                setJdContradictions([]);
+                setJdHasContradictions(false);
                 setExtractedSkills([]);
                 setRequiredSkills([]);
                 setMissingSkills([]);
@@ -626,7 +695,7 @@ Requirements:
 
                 recognition.continuous = true;
                 recognition.interimResults = true;
-                recognition.lang = 'en-IN';
+                recognition.lang = 'en-US';
                 recognition.maxAlternatives = 1;
 
                 const baseAtSessionStart = normalizeTranscript(finalTranscriptRef.current);
@@ -636,20 +705,6 @@ Requirements:
                 recognition.onstart = () => {
                     if (sessionId !== recognitionSessionIdRef.current) return;
                     setNoSpeechError(false);
-                    setInterviewerStatus('Microphone active — speak your answer now.');
-                };
-
-                recognition.onaudiostart = () => {
-                    if (sessionId === recognitionSessionIdRef.current) {
-                        setInterviewerStatus('Microphone is receiving audio — keep speaking.');
-                    }
-                };
-
-                recognition.onspeechstart = () => {
-                    if (sessionId === recognitionSessionIdRef.current) {
-                        setSpeechDetected(true);
-                        setInterviewerStatus('I can hear you — your answer is being captioned live.');
-                    }
                 };
 
                 recognition.onresult = (event) => {
@@ -659,33 +714,23 @@ Requirements:
                         !shouldContinueRecognitionRef.current
                     ) return;
 
-                    let newFinal = '';
-                    let newInterim = '';
+                    setSpeechDetected(true);
 
-                    // Process only the results belonging to this recognition event.
-                    // event.resultIndex avoids rebuilding the whole browser buffer and
-                    // prevents duplicate/empty text during Chrome restarts.
-                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                    let sessionFinal = '';
+                    let interim = '';
+
+                    for (let i = 0; i < event.results.length; i++) {
                         const result = event.results[i];
                         const spokenText = result?.[0]?.transcript || '';
-                        if (!spokenText.trim()) continue;
 
                         if (result.isFinal) {
-                            newFinal += spokenText + ' ';
+                            sessionFinal += spokenText + ' ';
                         } else {
-                            newInterim += spokenText + ' ';
+                            interim += spokenText;
                         }
                     }
 
-                    const finalPart = normalizeTranscript(newFinal);
-                    const interimPart = normalizeTranscript(newInterim);
-
-                    if (finalPart) {
-                        sessionFinalTranscriptRef.current = normalizeTranscript([
-                            sessionFinalTranscriptRef.current,
-                            finalPart
-                        ].filter(Boolean).join(' '));
-                    }
+                    sessionFinalTranscriptRef.current = normalizeTranscript(sessionFinal);
 
                     const committed = normalizeTranscript([
                         sessionBaseTranscriptRef.current,
@@ -694,21 +739,15 @@ Requirements:
 
                     finalTranscriptRef.current = committed;
 
-                    // IMPORTANT: interim text is kept in a separate live ref so the
-                    // latest words are available immediately when STOP is pressed.
+                    // Keep interim text as well so pressing STOP never loses the
+                    // most recent words that have not become final yet.
                     const visibleTranscript = normalizeTranscript([
                         committed,
-                        interimPart
+                        interim
                     ].filter(Boolean).join(' '));
 
                     liveTranscriptRef.current = visibleTranscript;
                     setTranscript(visibleTranscript);
-
-                    if (visibleTranscript) {
-                        setSpeechDetected(true);
-                        setNoSpeechError(false);
-                        setInterviewerStatus('Answer detected — keep speaking or press STOP ANSWER when finished.');
-                    }
                 };
 
                 recognition.onerror = (event) => {
@@ -716,49 +755,40 @@ Requirements:
 
                     console.warn('Speech recognition error:', event.error);
 
-                    const messages = {
-                        'not-allowed': 'Chrome blocked microphone access. Click the lock icon beside the address bar → Microphone → Allow, then reload the page.',
-                        'audio-capture': 'Chrome cannot access a microphone. Check that your microphone is connected and not being used exclusively by another application.',
-                        'service-not-allowed': 'Chrome speech recognition is not allowed for this page. Run the project on http://localhost, not file:// or an insecure IP address.',
-                        'network': 'Chrome speech recognition could not reach its speech service. Check your internet connection, then try START ANSWERING again.',
-                        'no-speech': 'No speech was detected yet. Keep speaking; the microphone is still active.',
-                        'aborted': 'Speech recognition restarted.'
-                    };
-
-                    const message = messages[event.error] || `Speech recognition error: ${event.error || 'unknown error'}`;
-
-                    if (event.error === 'not-allowed' || event.error === 'audio-capture' || event.error === 'permission-denied') {
-                        shouldContinueRecognitionRef.current = false;
-                        isRecordingRef.current = false;
-                        clearInterval(timerRef.current);
-                        setIsRecording(false);
-                        setNoSpeechError(true);
-                        setInterviewerStatus(message);
-                        showToast(message, 'warning');
+                    // These are recoverable and onend will restart recognition.
+                    if (
+                        event.error === 'no-speech' ||
+                        event.error === 'aborted' ||
+                        event.error === 'network' ||
+                        event.error === 'service-not-allowed'
+                    ) {
                         return;
                     }
 
-                    if (event.error === 'service-not-allowed' || event.error === 'network') {
-                        // Do NOT silently retry forever. A silent retry made the old UI
-                        // look like it was listening even though Chrome was returning no text.
+                    // Actual microphone/permission failures should stop recording.
+                    if (
+                        event.error === 'not-allowed' ||
+                        event.error === 'audio-capture' ||
+                        event.error === 'permission-denied'
+                    ) {
                         shouldContinueRecognitionRef.current = false;
                         isRecordingRef.current = false;
                         clearInterval(timerRef.current);
-                        clearTimeout(recognitionRestartTimeoutRef.current);
                         setIsRecording(false);
                         setNoSpeechError(true);
-                        setInterviewerStatus(message);
-                        showToast(message, 'warning');
+                        showToast(
+                            'Microphone access is unavailable. Allow microphone permission in Chrome/Edge and try again.',
+                            'warning'
+                        );
                     }
                 };
 
                 recognition.onend = () => {
                     if (sessionId !== recognitionSessionIdRef.current) return;
 
-                    // Chrome can end recognition after a pause. Restart only for the
-                    // normal no-speech/idle case, while preserving everything captured.
                     if (isRecordingRef.current && shouldContinueRecognitionRef.current) {
                         clearTimeout(recognitionRestartTimeoutRef.current);
+
                         recognitionRestartTimeoutRef.current = setTimeout(() => {
                             if (
                                 isRecordingRef.current &&
@@ -767,7 +797,7 @@ Requirements:
                             ) {
                                 startRecognitionSession();
                             }
-                        }, 300);
+                        }, 180);
                     }
                 };
 
@@ -777,11 +807,10 @@ Requirements:
                     recognition.start();
                 } catch (error) {
                     console.warn('Speech recognition start error:', error);
-                    setInterviewerStatus('Could not start the microphone. Check browser permissions and try again.');
                 }
             };
 
-            const startSpeechRecognition = async () => {
+            const startSpeechRecognition = () => {
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
                 if (!SpeechRecognition) {
@@ -795,31 +824,6 @@ Requirements:
 
                 if (isRecordingRef.current) return;
 
-                // Explicitly test microphone access before starting SpeechRecognition.
-                // This makes Chrome show the permission prompt and prevents the old
-                // silent "listening" state when the browser had blocked the mic.
-                if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-                    setNoSpeechError(true);
-                    setInterviewerStatus('Voice input requires localhost/HTTPS. Open the app through VS Code Live Server or another localhost server.');
-                    showToast('Voice input requires localhost/HTTPS. Do not open the HTML with file://.', 'warning');
-                    return;
-                }
-
-                try {
-                    if (!navigator.mediaDevices?.getUserMedia) {
-                        throw new Error('Microphone API unavailable');
-                    }
-
-                    const permissionTest = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-                    permissionTest.getTracks().forEach(track => track.stop());
-                } catch (error) {
-                    console.error('Microphone permission test failed:', error);
-                    setNoSpeechError(true);
-                    setInterviewerStatus('Microphone permission was not granted. Allow Microphone for this localhost page and press START ANSWERING again.');
-                    showToast('Microphone access is required. Click the lock icon beside the address bar → Microphone → Allow.', 'warning');
-                    return;
-                }
-
                 clearTimeout(recognitionRestartTimeoutRef.current);
                 clearInterval(timerRef.current);
 
@@ -829,6 +833,7 @@ Requirements:
                     try { oldRecognition.abort(); } catch (e) {}
                 }
 
+                // Fresh answer.
                 finalTranscriptRef.current = '';
                 sessionBaseTranscriptRef.current = '';
                 sessionFinalTranscriptRef.current = '';
@@ -838,12 +843,13 @@ Requirements:
                 setNoSpeechError(false);
                 setSpeechDetected(false);
                 setIsRecording(true);
-                setInterviewerStatus('Starting microphone…');
+                setInterviewerStatus("Take your time. I'm listening.");
                 setRecordingTimer(0);
 
                 isRecordingRef.current = true;
                 shouldContinueRecognitionRef.current = true;
 
+                // Do not let the AI question audio get captured as the candidate's answer.
                 if (window.speechSynthesis) {
                     window.speechSynthesis.cancel();
                     setAiSpeaking(false);
@@ -859,6 +865,8 @@ Requirements:
             };
 
             const stopSpeechRecognition = () => {
+                // Capture the latest live text BEFORE stopping recognition.
+                // This includes interim words that may not have become final yet.
                 const capturedBeforeStop = normalizeTranscript(
                     liveTranscriptRef.current ||
                     finalTranscriptRef.current ||
@@ -867,6 +875,8 @@ Requirements:
 
                 isRecordingRef.current = false;
                 shouldContinueRecognitionRef.current = false;
+
+                // Invalidate the current session so its onend cannot restart it.
                 recognitionSessionIdRef.current += 1;
 
                 clearInterval(timerRef.current);
@@ -878,7 +888,6 @@ Requirements:
 
                 if (recognition) {
                     try { recognition.stop(); } catch (e) {}
-                    try { recognition.abort(); } catch (e) {}
                 }
 
                 finalTranscriptRef.current = capturedBeforeStop;
@@ -892,11 +901,10 @@ Requirements:
 
                 if (!capturedBeforeStop) {
                     setNoSpeechError(true);
-                    setInterviewerStatus("I didn't catch any speech. Check the microphone indicator/permission and try again.");
-                    showToast('No speech was captured. Check the microphone permission and try again.', 'warning');
+                    setInterviewerStatus("I didn't catch an answer. Please try again.");
                 } else {
                     setNoSpeechError(false);
-                    setInterviewerStatus('Answer captured. Review it below, then submit.');
+                    setInterviewerStatus("Answer captured. Review it below, then submit.");
                 }
             };
 
@@ -1531,6 +1539,34 @@ Requirements:
                                         </span>
                                     </div>
 
+                                    {jdHasContradictions && (
+                                        <div className="bg-amber-50 border border-amber-300 rounded-xl p-5 space-y-3">
+                                            <div className="flex items-start space-x-3">
+                                                <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                                                    <i className="fas fa-triangle-exclamation"></i>
+                                                </div>
+                                                <div>
+                                                    <h3 className="font-bold text-amber-900">JD Contradiction Flagged</h3>
+                                                    <p className="text-sm text-amber-800 mt-1">
+                                                        The JD contains conflicting seniority/experience signals. CareerForge will not silently choose an interpretation.
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                {jdContradictions.map((item, idx) => (
+                                                    <div key={idx} className="bg-white/80 border border-amber-200 rounded-lg p-3">
+                                                        <div className="text-xs font-bold text-amber-900">{item.type}</div>
+                                                        <div className="text-xs text-slate-700 mt-1">{item.evidence}</div>
+                                                        <div className="text-xs text-slate-600 mt-2">
+                                                            <span className="font-semibold">Agent action:</span> {item.action}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                         {agents.map(agent => (
                                             <div key={agent.id} className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
@@ -1573,6 +1609,20 @@ Requirements:
                                         <p className="text-sm text-slate-500">Skills worth strengthening for {targetRole || 'Target Role'}.</p>
                                     </div>
 
+                                    {jdHasContradictions && (
+                                        <div className="bg-amber-50 border border-amber-300 rounded-xl p-4">
+                                            <div className="flex items-start space-x-3">
+                                                <i className="fas fa-circle-exclamation text-amber-600 mt-0.5"></i>
+                                                <div>
+                                                    <div className="font-semibold text-amber-900 text-sm">Requirement conflict affects skill-gap interpretation</div>
+                                                    <p className="text-xs text-amber-800 mt-1">
+                                                        The requirements contain incompatible seniority signals. Missing skills are shown from the JD text, but CareerForge does not assume the candidate must already have senior-level experience.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-3">
                                             <h3 className="font-semibold text-slate-900 text-sm text-emerald-800 flex items-center space-x-2">
@@ -1612,6 +1662,20 @@ Requirements:
                                         <h2 className="text-xl font-bold text-slate-900">Resume Optimizer</h2>
                                         <p className="text-sm text-slate-500">AI-suggested bullet point fixes for higher ATS readability.</p>
                                     </div>
+
+                                    {jdHasContradictions && (
+                                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-4">
+                                            <div className="flex items-start space-x-3">
+                                                <i className="fas fa-shield-halved text-indigo-600 mt-0.5"></i>
+                                                <div>
+                                                    <div className="font-semibold text-indigo-900 text-sm">Resume suggestions adjusted for the conflicting JD</div>
+                                                    <p className="text-xs text-indigo-800 mt-1">
+                                                        Suggestions avoid fabricating seniority or years of experience. They focus on verified skills, transferable evidence, and transparent positioning.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     <div className="space-y-4">
                                         {optimizedBullets.length > 0 ? optimizedBullets.map((item, idx) => (
