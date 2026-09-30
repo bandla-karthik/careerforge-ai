@@ -233,6 +233,10 @@ Challenge Requirements:
             const [jdContradictions, setJdContradictions] = useState([]);
             const [jdHasContradictions, setJdHasContradictions] = useState(false);
 
+            // Resume integrity / red-flag analysis
+            const [resumeFlags, setResumeFlags] = useState([]);
+            const [resumeRiskLevel, setResumeRiskLevel] = useState('NOT ANALYZED');
+
             // Extracted Metrics
             const [extractedSkills, setExtractedSkills] = useState([]);
             const [requiredSkills, setRequiredSkills] = useState([]);
@@ -437,6 +441,79 @@ Challenge Requirements:
             const getSkillAliases = (canonical) => (SKILL_DEFINITIONS.find(([name]) => name.toLowerCase() === canonical.toLowerCase()) || [canonical,[canonical]])[1];
             const skillEquivalent = (candidateSkill, requiredSkill) => candidateSkill.toLowerCase() === requiredSkill.toLowerCase() || getSkillAliases(requiredSkill).some(alias => skillMentioned(candidateSkill,[alias]));
 
+            // Candidate-side resume integrity engine. This is intentionally deterministic so
+            // obvious inconsistencies are visible even without an external AI/API.
+            const analyzeResumeIntegrity = (rText) => {
+                const text = String(rText || '').replace(/\r/g, '');
+                const lower = text.toLowerCase();
+                const flags = [];
+                const add = (type, severity, evidence, action) => flags.push({type, severity, evidence, action});
+                const years = [...text.matchAll(/\b(19\d{2}|20\d{2})\b/g)].map(m => Number(m[1]));
+                const currentYear = new Date().getFullYear();
+                const firstYear = years.length ? Math.min(...years) : null;
+                const lastYear = years.length ? Math.max(...years) : null;
+
+                // Implausible total experience claims.
+                const expMatches = [...text.matchAll(/\b(\d{1,2})\+?\s*(?:years?|yrs?)(?:\s+of)?\s*(?:professional\s+)?experience\b/gi)];
+                expMatches.forEach(m => {
+                    const n = Number(m[1]);
+                    if (n >= 10) add('Experience Claim Risk', 'high', `Resume claims ${n}+ years of experience.`, 'Verify the employment timeline and supporting roles before accepting the claim.');
+                    if (n >= 5 && firstYear && currentYear - firstYear < n + 2) add('Experience / Timeline Conflict', 'high', `Claims ${n}+ years while the earliest detected year is ${firstYear}.`, 'Check whether the claimed experience predates the documented timeline.');
+                });
+
+                // Education/work chronology conflicts.
+                const eduRanges = [...text.matchAll(/(?:education|b\.?(?:tech|e|s)?|bachelor|master|diploma|university|college)[^\n]{0,100}(?:19\d{2}|20\d{2})\s*[-–—]\s*(19\d{2}|20\d{2}|present)/gi)];
+                const eduYears = [...text.matchAll(/(?:bachelor|master|b\.tech|m\.tech|b\.s\.|m\.s\.|diploma)[^\n]{0,120}\b(19\d{2}|20\d{2})\b/gi)].map(m => Number(m[1]));
+                if (eduYears.length && firstYear && Math.min(...eduYears) > firstYear) add('Education / Experience Timeline', 'medium', `Education begins around ${Math.min(...eduYears)}, but an earlier work year (${firstYear}) was detected.`, 'Verify whether the earlier role was legitimate concurrent experience.');
+                if (/\b20(?:1[0-9]|2[0-9])\b[^\n]{0,80}\b(?:present|current)\b/i.test(text) && /\b(?:intern|internship)\b/i.test(lower) && /\b(?:senior|lead|principal|architect)\b/i.test(lower)) add('Seniority / Role Mismatch', 'high', 'The resume combines internship language with senior/lead/principal/architect claims.', 'Verify the actual title, dates, and scope of each role.');
+
+                // Implausible numerical impact claims.
+                const pct = [...text.matchAll(/\b(\d{3,4})\s*%/g)].map(m => Number(m[1]));
+                pct.forEach(n => {
+                    if (n >= 200) add('Extreme Percentage Claim', 'high', `Detected a ${n}% claim.`, 'Require measurable evidence or a source before treating this as credible.');
+                    else if (n >= 100) add('Unusual Percentage Claim', 'medium', `Detected a ${n}% claim.`, 'Verify the baseline and measurement method.');
+                });
+                if (/\b100\s*%\s*(?:accuracy|accurate|success|guarantee)/i.test(text)) add('Absolute Performance Claim', 'high', 'The resume claims 100% accuracy/success.', 'Verify the dataset, evaluation protocol, and metric definition.');
+
+                // Overclaiming / unverifiable superlatives.
+                const superlatives = [
+                    [/\bworld['’]?s\s+(?:youngest|first|best|only|leading)\b/i, 'Unverifiable Superlative', 'Contains a world-first/youngest/best/only claim.'],
+                    [/\b(?:replaced|replace)\s+human(?:s| decision-making)?\b/i, 'Extreme Capability Claim', 'Claims an AI system can replace human decision-making.'],
+                    [/\b(?:solv(?:e|es?)|handles?)\s+(?:every|all)\s+(?:business|problem|task)s?\b/i, 'Extreme Capability Claim', 'Claims universal problem-solving capability.'],
+                    [/\b\d+\+?\s+(?:international\s+)?hackathons?\b/i, 'Achievement Verification Risk', 'Large hackathon count requires verification.'],
+                    [/\b\d+\+?\s+(?:research\s+)?papers?\b/i, 'Achievement Verification Risk', 'Large publication count requires verification.'],
+                    [/\b\d+\+?\s+patents?\b/i, 'Achievement Verification Risk', 'Large patent count requires verification.']
+                ];
+                superlatives.forEach(([rx,type,evidence]) => { if (rx.test(text)) add(type, 'high', evidence, 'Ask for verifiable evidence such as links, publication records, patent numbers, or competition results.'); });
+
+                // Suspiciously broad keyword stuffing.
+                const detectedSkills = extractSkillsDynamic(text);
+                if (detectedSkills.length >= 25) add('Keyword Stuffing', 'medium', `${detectedSkills.length} technologies/skills were detected across a very broad stack.`, 'Check whether the skills are supported by projects or employment evidence rather than being a keyword list.');
+                const skillSection = text.match(/(?:technical skills|skills|core competencies)[\s\S]{0,1800}/i)?.[0] || '';
+                const pipeCount = (skillSection.match(/[|]/g) || []).length;
+                if (pipeCount >= 12) add('Keyword-Dense Skills Section', 'medium', 'The skills section contains unusually dense delimiter-separated keywords.', 'Check for evidence of practical use for the listed skills.');
+
+                // Claims of working simultaneously across many major companies.
+                const majorCompanies = ['google','microsoft','amazon','openai','tesla','meta','apple','nvidia'];
+                const namedCompanies = majorCompanies.filter(c => new RegExp('\\b'+c.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')+'\\b','i').test(text));
+                if (namedCompanies.length >= 4) add('Employer Claim Verification', 'high', `Resume names ${namedCompanies.length} major technology companies: ${namedCompanies.join(', ')}.`, 'Verify whether these were employers, clients, partners, projects, or unsupported claims.');
+
+                // Duplicate/contradictory role dates.
+                const roleDateRanges = [...text.matchAll(/\b(19\d{2}|20\d{2})\s*[-–—]\s*(19\d{2}|20\d{2}|present)\b/gi)].map(m => ({start:Number(m[1]), end:/present/i.test(m[2])?currentYear:Number(m[2])}));
+                for (let i=0;i<roleDateRanges.length;i++) for (let j=i+1;j<roleDateRanges.length;j++) {
+                    if (roleDateRanges[i].end > roleDateRanges[j].start && roleDateRanges[j].end > roleDateRanges[i].start && Math.abs(roleDateRanges[i].start-roleDateRanges[j].start)>0) {
+                        if (/experience|work|engineer|intern|manager|developer|architect/i.test(text)) { add('Overlapping Timeline', 'medium', 'Multiple employment-style date ranges overlap.', 'Verify whether concurrent employment was intentional and accurately described.'); i=roleDateRanges.length; break; }
+                    }
+                }
+
+                // Generic integrity checks.
+                if (/\bcompletely true and accurate\b/i.test(text) && flags.length) add('Declaration Does Not Resolve Flags', 'low', 'A truth declaration is present alongside independently detectable risk signals.', 'Treat the declaration as non-evidence; verify the underlying claims.');
+                const high = flags.filter(f=>f.severity==='high').length;
+                const medium = flags.filter(f=>f.severity==='medium').length;
+                const risk = high >= 2 ? 'HIGH RISK' : (high === 1 || medium >= 2 ? 'REVIEW REQUIRED' : (medium === 1 ? 'LOW RISK' : 'NO MAJOR FLAGS'));
+                return {flags, risk, high, medium};
+            };
+
             // Dynamic deterministic Skills & Requirements extractor.
             const analyzeTextLocally = (rText, jText) => {
                 const resume = String(rText || '');
@@ -454,7 +531,8 @@ Challenge Requirements:
                 let nameFound = 'Applicant Candidate';
                 const firstLine = resume.trim().split(/\n+/)[0];
                 if (firstLine && firstLine.length < 50 && !/resume|curriculum vitae/i.test(firstLine)) nameFound = firstLine.replace(/[^a-zA-Z\s.'-]/g, '').trim() || 'Applicant Candidate';
-                return { extractedSkills:candidateSkills, requiredSkills:required, missingSkills:missing, matchedSkills:matched, matchScore:coverage, skillCoverage:coverage, atsReadability:atsVal, targetRoleName:roleName, candidateNameExtracted:nameFound, jdContradictions:contradictionAnalysis.items, jdHasContradictions:contradictionAnalysis.hasContradictions };
+                const integrity = analyzeResumeIntegrity(resume);
+                return { extractedSkills:candidateSkills, requiredSkills:required, missingSkills:missing, matchedSkills:matched, matchScore:coverage, skillCoverage:coverage, atsReadability:atsVal, targetRoleName:roleName, candidateNameExtracted:nameFound, jdContradictions:contradictionAnalysis.items, jdHasContradictions:contradictionAnalysis.hasContradictions, resumeFlags:integrity.flags, resumeRiskLevel:integrity.risk };
             };
 
             const executeMultiAgentPipeline = (rText, jText) => {
@@ -1283,6 +1361,35 @@ Challenge Requirements:
                                             <div className="text-xs text-slate-400 mt-1">{completedEvals.length} responses evaluated</div>
                                         </div>
                                     </div>
+
+                                    {/* Resume Integrity / Red-Flag Detection */}
+                                    {resumeStatus === 'ANALYZED' && (
+                                        <div className={`rounded-xl border p-5 ${resumeFlags.length ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                                            <div className="flex items-start justify-between gap-4">
+                                                <div className="flex items-start gap-3">
+                                                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${resumeFlags.length ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                                                        <i className={`fas ${resumeFlags.length ? 'fa-shield-exclamation' : 'fa-shield-check'}`}></i>
+                                                    </div>
+                                                    <div>
+                                                        <h3 className={`font-bold ${resumeFlags.length ? 'text-red-900' : 'text-emerald-900'}`}>Resume Integrity Check</h3>
+                                                        <p className={`text-xs mt-1 ${resumeFlags.length ? 'text-red-800' : 'text-emerald-800'}`}>
+                                                            {resumeFlags.length ? `${resumeFlags.length} red flag${resumeFlags.length===1?'':'s'} detected. Manual verification is recommended.` : 'No major integrity flags detected by the local rule engine.'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${resumeRiskLevel==='HIGH RISK'?'bg-red-200 text-red-900':resumeRiskLevel==='REVIEW REQUIRED'?'bg-amber-200 text-amber-900':resumeRiskLevel==='LOW RISK'?'bg-yellow-200 text-yellow-900':'bg-emerald-200 text-emerald-900'}`}>{resumeRiskLevel}</span>
+                                            </div>
+                                            {resumeFlags.length > 0 && <div className="mt-4 space-y-2">
+                                                {resumeFlags.map((flag,idx)=>(
+                                                    <div key={idx} className="bg-white/80 border border-red-100 rounded-lg p-3">
+                                                        <div className="flex items-center justify-between gap-2"><div className="text-xs font-bold text-slate-900">{flag.type}</div><span className={`text-[10px] uppercase font-bold ${flag.severity==='high'?'text-red-700':flag.severity==='medium'?'text-amber-700':'text-slate-500'}`}>{flag.severity}</span></div>
+                                                        <div className="text-xs text-slate-700 mt-1">{flag.evidence}</div>
+                                                        <div className="text-[11px] text-slate-500 mt-1"><strong>Verification:</strong> {flag.action}</div>
+                                                    </div>
+                                                ))}
+                                            </div>}
+                                        </div>
+                                    )}
 
                                     {/* Action Card or Summary */}
                                     {sessionState === 'SESSION EMPTY' ? (
