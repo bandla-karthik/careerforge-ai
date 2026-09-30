@@ -391,60 +391,70 @@ Challenge Requirements:
                 return { hasContradictions: findings.length > 0, items: findings };
             };
 
-            // Deterministic Skills & Keywords extractor (Local Engine)
+            // Dynamic skill/requirement engine. No hard-coded missing-skill fallback.
+            const SKILL_DEFINITIONS = [
+                ['Python',['python']], ['JavaScript',['javascript','js']], ['TypeScript',['typescript','ts']],
+                ['React',['react','reactjs']], ['Angular',['angular']], ['Vue',['vue','vue.js']], ['Node.js',['node.js','nodejs','node']],
+                ['Java',['java']], ['C++',['c++','cpp']], ['C#',['c#','c sharp']], ['SQL',['sql','structured query language']],
+                ['PostgreSQL',['postgresql','postgres']], ['MongoDB',['mongodb','mongo db']], ['Redis',['redis']],
+                ['Docker',['docker','containerization','containers']], ['Kubernetes',['kubernetes','k8s']],
+                ['AWS',['aws','amazon web services']], ['Azure',['azure','microsoft azure']], ['GCP',['gcp','google cloud','google cloud platform']],
+                ['Git',['git','github','gitlab','version control']], ['Machine Learning',['machine learning','ml']],
+                ['Deep Learning',['deep learning']], ['PyTorch',['pytorch','torch']], ['TensorFlow',['tensorflow','tf']],
+                ['Scikit-Learn',['scikit-learn','scikit learn','sklearn']], ['FastAPI',['fastapi']], ['Flask',['flask']], ['Django',['django']],
+                ['Pandas',['pandas']], ['NumPy',['numpy','np']], ['CI/CD',['ci/cd','continuous integration','continuous delivery','continuous deployment']],
+                ['MLOps',['mlops','machine learning operations']], ['REST APIs',['rest api','rest apis','restful api','restful apis']],
+                ['GraphQL',['graphql']], ['System Design',['system design','system architecture']], ['Microservices',['microservices','microservice architecture']],
+                ['Data Analysis',['data analysis','data analytics']], ['HTML',['html']], ['CSS',['css']], ['Tailwind',['tailwind','tailwind css']],
+                ['Agile',['agile','scrum']], ['Linux',['linux']], ['DevOps',['devops']],
+                ['Generative AI',['generative ai','genai']], ['LLMs',['llm','llms','large language model','large language models']],
+                ['NLP',['nlp','natural language processing']], ['Computer Vision',['computer vision','cv']],
+                ['Hugging Face',['hugging face','transformers']], ['LangChain',['langchain']], ['OpenAI API',['openai api','openai']],
+                ['Prompt Engineering',['prompt engineering']], ['RAG',['rag','retrieval augmented generation']],
+                ['Vector Databases',['vector database','vector databases','pinecone','weaviate','chroma','chromadb']],
+                ['Model Monitoring',['model monitoring','model observability']], ['Model Evaluation',['model evaluation','model validation']],
+                ['Feature Engineering',['feature engineering']], ['Statistics',['statistics','statistical analysis']],
+                ['Data Visualization',['data visualization','data visualisation']], ['ETL',['etl','extract transform load']],
+                ['Airflow',['airflow','apache airflow']], ['Spark',['spark','apache spark','pyspark']], ['Bash',['bash','shell scripting']],
+                ['Terraform',['terraform']], ['Jenkins',['jenkins']], ['Azure DevOps',['azure devops']],
+                ['Cloud Architecture',['cloud architecture']], ['Technical Design',['technical design']],
+                ['Problem Solving',['problem solving','problem-solving']], ['Communication',['communication skills']]
+            ];
+
+            const normalizeSkillText = (value) => String(value || '').toLowerCase().replace(/[–—]/g,'-').replace(/[^a-z0-9+#./ -]/g,' ').replace(/\s+/g,' ').trim();
+
+            const skillMentioned = (text, aliases) => {
+                const normalized = normalizeSkillText(text);
+                return aliases.some(alias => {
+                    const a = normalizeSkillText(alias);
+                    if (!a) return false;
+                    const escaped = a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\s+/g,'\\s+');
+                    return new RegExp(`(^|[^a-z0-9+#])${escaped}(?=$|[^a-z0-9+#])`, 'i').test(normalized);
+                });
+            };
+
+            const extractSkillsDynamic = (text) => SKILL_DEFINITIONS.filter(([, aliases]) => skillMentioned(text, aliases)).map(([canonical]) => canonical);
+            const getSkillAliases = (canonical) => (SKILL_DEFINITIONS.find(([name]) => name.toLowerCase() === canonical.toLowerCase()) || [canonical,[canonical]])[1];
+            const skillEquivalent = (candidateSkill, requiredSkill) => candidateSkill.toLowerCase() === requiredSkill.toLowerCase() || getSkillAliases(requiredSkill).some(alias => skillMentioned(candidateSkill,[alias]));
+
+            // Dynamic deterministic Skills & Requirements extractor.
             const analyzeTextLocally = (rText, jText) => {
-                const knownSkills = [
-                    "Python", "JavaScript", "TypeScript", "React", "Angular", "Vue", "Node.js", "Java", "C++", "C#",
-                    "SQL", "PostgreSQL", "MongoDB", "Redis", "Docker", "Kubernetes", "AWS", "Azure", "GCP", "Git",
-                    "Machine Learning", "Deep Learning", "PyTorch", "TensorFlow", "Scikit-Learn", "FastAPI", "Flask",
-                    "Django", "Pandas", "NumPy", "CI/CD", "MLOps", "REST APIs", "GraphQL", "System Design", "Microservices",
-                    "Data Analysis", "HTML", "CSS", "Tailwind", "Agile", "Linux", "DevOps"
-                ];
-
-                const lowerR = rText.toLowerCase();
-                const lowerJ = jText.toLowerCase();
-                const contradictionAnalysis = detectJDContradictions(jText);
-
-                const candSkills = knownSkills.filter(skill => lowerR.includes(skill.toLowerCase()));
-                const reqSkills = knownSkills.filter(skill => lowerJ.includes(skill.toLowerCase()));
-
-                // Fallback skill generation if texts are short
-                const finalCandSkills = candSkills.length > 0 ? candSkills : ["Python", "SQL", "Problem Solving", "Git"];
-                const finalReqSkills = reqSkills.length > 0 ? reqSkills : ["Python", "SQL", "Docker", "AWS", "Machine Learning"];
-
-                const missing = finalReqSkills.filter(s => !finalCandSkills.some(cs => cs.toLowerCase() === s.toLowerCase()));
-                const matched = finalReqSkills.filter(s => finalCandSkills.some(cs => cs.toLowerCase() === s.toLowerCase()));
-
-                const coverage = finalReqSkills.length > 0 ? Math.round((matched.length / finalReqSkills.length) * 100) : 50;
-                const matchVal = Math.min(98, Math.max(30, coverage + 15));
-                const atsVal = rText.length > 100 ? Math.min(95, 70 + (rText.split('\n').length * 2)) : 60;
-
-                // Derive role name if available
-                let roleName = "Target Professional Role";
-                const roleMatch = jText.match(/(?:title|position|role):\s*([^\n]+)/i) || jText.match(/^([^\n]+)/);
-                if (roleMatch && roleMatch[1] && roleMatch[1].length < 40) {
-                    roleName = roleMatch[1].trim();
-                }
-
-                // Derive candidate name
-                let nameFound = "Applicant Candidate";
-                const firstLine = rText.trim().split('\n')[0];
-                if (firstLine && firstLine.length < 35 && !firstLine.toLowerCase().includes('resume')) {
-                    nameFound = firstLine.replace(/[^a-zA-Z\s]/g, '').trim() || "Applicant Candidate";
-                }
-
-                return {
-                    extractedSkills: finalCandSkills,
-                    requiredSkills: finalReqSkills,
-                    missingSkills: missing.length > 0 ? missing : ["Cloud Architecture", "System Design"],
-                    matchScore: matchVal,
-                    skillCoverage: coverage,
-                    atsReadability: atsVal,
-                    targetRoleName: roleName,
-                    candidateNameExtracted: nameFound,
-                    jdContradictions: contradictionAnalysis.items,
-                    jdHasContradictions: contradictionAnalysis.hasContradictions
-                };
+                const resume = String(rText || '');
+                const jd = String(jText || '');
+                const contradictionAnalysis = detectJDContradictions(jd);
+                const candidateSkills = extractSkillsDynamic(resume);
+                const required = extractSkillsDynamic(jd);
+                const matched = required.filter(req => candidateSkills.some(cs => skillEquivalent(cs, req)));
+                const missing = required.filter(req => !candidateSkills.some(cs => skillEquivalent(cs, req)));
+                const coverage = required.length ? Math.round((matched.length / required.length) * 100) : 0;
+                const atsVal = resume.length > 100 ? Math.min(95, Math.max(60, 65 + Math.min(30, Math.round(resume.split(/\n+/).length * 1.5)))) : 50;
+                let roleName = 'Target Professional Role';
+                const roleMatch = jd.match(/(?:target position|job title|position|role|title)\s*:\s*([^\n]+)/i) || jd.match(/^([^\n]+)/);
+                if (roleMatch && roleMatch[1] && roleMatch[1].trim().length < 80) roleName = roleMatch[1].trim();
+                let nameFound = 'Applicant Candidate';
+                const firstLine = resume.trim().split(/\n+/)[0];
+                if (firstLine && firstLine.length < 50 && !/resume|curriculum vitae/i.test(firstLine)) nameFound = firstLine.replace(/[^a-zA-Z\s.'-]/g, '').trim() || 'Applicant Candidate';
+                return { extractedSkills:candidateSkills, requiredSkills:required, missingSkills:missing, matchedSkills:matched, matchScore:coverage, skillCoverage:coverage, atsReadability:atsVal, targetRoleName:roleName, candidateNameExtracted:nameFound, jdContradictions:contradictionAnalysis.items, jdHasContradictions:contradictionAnalysis.hasContradictions };
             };
 
             const executeMultiAgentPipeline = (rText, jText) => {
@@ -486,7 +496,7 @@ Challenge Requirements:
                         setSessionState('ANALYSIS COMPLETE');
 
                         // Run local analysis
-                        const results = analyzeTextLocally(rText, jText);
+                        const results = analyzeTextLocally(rText, [targetRole, jText].filter(Boolean).join("\n"));
                         setExtractedSkills(results.extractedSkills);
                         setRequiredSkills(results.requiredSkills);
                         setMissingSkills(results.missingSkills);
@@ -923,112 +933,51 @@ Challenge Requirements:
                 };
             }, []);
 
-            // Evaluate current candidate answer deterministically.
+            // Evaluate the answer for meaning, not just word count or exact keywords.
             const handleSubmitAnswer = (answerText) => {
                 const typedAnswer = normalizeTranscript(manualResponseText);
-                const liveVoiceAnswer = normalizeTranscript(
-                    liveTranscriptRef.current ||
-                    finalTranscriptRef.current ||
-                    transcript
-                );
-
-                // Explicit answer > typed mode > live voice > typed fallback.
-                const finalResponse = normalizeTranscript(
-                    answerText ||
-                    (textResponseMode ? typedAnswer : '') ||
-                    liveVoiceAnswer ||
-                    typedAnswer
-                );
-
-                if (!finalResponse) {
-                    setNoSpeechError(true);
-                    showToast('No answer was captured. Speak your answer or type it first.', 'warning');
-                    return;
-                }
-
-                setTranscript(finalResponse);
-                liveTranscriptRef.current = finalResponse;
-                finalTranscriptRef.current = finalResponse;
-
-                setIsEvaluating(true);
-                setInterviewerStatus("Evaluating your response...");
-
+                const liveVoiceAnswer = normalizeTranscript(liveTranscriptRef.current || finalTranscriptRef.current || transcript);
+                const finalResponse = normalizeTranscript(answerText || (textResponseMode ? typedAnswer : '') || liveVoiceAnswer || typedAnswer);
+                if (!finalResponse) { setNoSpeechError(true); showToast('No answer was captured. Speak your answer or type it first.', 'warning'); return; }
+                setTranscript(finalResponse); liveTranscriptRef.current=finalResponse; finalTranscriptRef.current=finalResponse;
+                setIsEvaluating(true); setInterviewerStatus('Evaluating your response for correctness, relevance and completeness...');
                 setTimeout(() => {
-                    const currentQ = questions[currentQuestionIndex];
-                    if (!currentQ) {
-                        setIsEvaluating(false);
-                        return;
-                    }
-
-                    const keypoints = currentQ.keypoints || ['concept', 'clarity', 'experience'];
-                    const lowerAns = finalResponse.toLowerCase();
-
-                    let matchedCount = 0;
-                    keypoints.forEach(kp => {
-                        if (lowerAns.includes(kp.toLowerCase())) matchedCount++;
-                    });
-
-                    const keypointRatio = matchedCount / Math.max(1, keypoints.length);
-                    const wordCount = finalResponse.trim().split(/\s+/).length;
-
-                    const techScore = Math.min(95, Math.max(40, Math.round(keypointRatio * 60 + (wordCount > 30 ? 30 : wordCount))));
-                    const relevanceScore = Math.min(98, Math.max(50, Math.round(keypointRatio * 50 + 45)));
-                    const completenessScore = Math.min(95, Math.max(40, Math.round((wordCount / 60) * 40 + 50)));
-                    const commScore = wordCount > 20 ? 88 : 65;
-                    const overallScore = Math.round((techScore * 0.4) + (relevanceScore * 0.3) + (completenessScore * 0.2) + (commScore * 0.1));
-
-                    let weaknessArea = null;
-                    if (techScore < 70) weaknessArea = "Technical depth and key concepts";
-                    else if (completenessScore < 70) weaknessArea = "Answer completeness and practical examples";
-                    else if (relevanceScore < 70) weaknessArea = "Alignment with role requirements";
-
-                    const evalResult = {
-                        overallScore,
-                        technicalAccuracy: techScore,
-                        relevance: relevanceScore,
-                        completeness: completenessScore,
-                        communication: commScore,
-                        keypointsCovered: matchedCount,
-                        totalKeypoints: keypoints.length,
-                        strengths: wordCount > 25 ? "Good structured articulation of core ideas." : "Direct to the point.",
-                        areasForImprovement: weaknessArea ? `Could elaborate more on ${weaknessArea}.` : "Solid overall response.",
-                        transcript: finalResponse
+                    const currentQ=questions[currentQuestionIndex];
+                    if(!currentQ){setIsEvaluating(false);return;}
+                    const answer=normalizeSkillText(finalResponse), wordCount=answer.split(/\s+/).filter(Boolean).length;
+                    const CONCEPT_ALIASES={
+                        'python':['python'],'data cleaning':['data cleaning','clean data','preprocess','pre-processing','preprocessing'],'model evaluation':['model evaluation','evaluate the model','evaluation metrics','validation','cross validation','cross-validation'],'production considerations':['production','deployment','deploy','monitoring','scalability','latency','reliability'],
+                        'pandas':['pandas'],'imputation':['imputation','impute','missing values','missing data'],'feature scaling':['feature scaling','normalization','standardization','normalize','standardize'],'outliers':['outliers','outlier detection','anomalies'],
+                        'docker':['docker','container','containerization','dockerfile'],'containers':['containers','container','containerization'],'images':['docker image','container image','images'],'deployment':['deployment','deploy','release'],'isolation':['isolation','isolated environment'],
+                        'reliability':['reliability','fault tolerance','resilience'],'scalability':['scalability','scale horizontally','scale vertically'],'monitoring':['monitoring','observability','metrics','logging','alerts'],'machine learning':['machine learning','ml'],
+                        'supervised learning':['supervised learning','labeled data','labelled data'],'unsupervised learning':['unsupervised learning','unlabeled data','unlabelled data'],'classification':['classification','classify'],'regression':['regression','predict a continuous value'],
+                        'overfitting':['overfitting','over-fit','memorize training data','memorise training data'],'underfitting':['underfitting','under-fit'],'training data':['training data','training set'],'test data':['test data','test set','unseen data','unseen examples'],'regularization':['regularization','regularisation','l1','l2','dropout'],
+                        'fastapi':['fastapi'],'flask':['flask'],'sql':['sql','query database'],'git':['git','version control'],'system architecture':['system architecture','architecture','design'],'api':['api','endpoint','rest api','restful api']
                     };
-
-                    setEvaluations(prev => ({ ...prev, [currentQ.id]: evalResult }));
-                    setIsEvaluating(false);
-                    setInterviewerStatus("Good — let's explore that further.");
-
-                    if (weaknessArea || missingSkills.length > 0) {
-                        const targetTopic = missingSkills[0] || "System Architecture";
-                        const adaptiveQ = {
-                            id: Date.now(),
-                            type: 'Adaptive Follow-Up',
-                            question: `Follow-up on your response: How would you address real-world deployment challenges related to ${targetTopic}?`,
-                            keypoints: [targetTopic, 'reliability', 'scalability', 'monitoring'],
-                            category: 'Targeted Gap',
-                            difficulty: 'Hard',
-                            isAdaptive: true
-                        };
-
-                        setQuestions(prev => {
-                            if (prev.some(q => q.isAdaptive && q.question.includes(targetTopic))) return prev;
-                            const nextList = [...prev];
-                            nextList.splice(currentQuestionIndex + 1, 0, adaptiveQ);
-                            return nextList;
-                        });
-
-                        showToast('Adaptive follow-up question added based on your response.', 'info');
-                    }
-
-                    setTranscript('');
-                    setManualResponseText('');
-                    setTextResponseMode(false);
-                    liveTranscriptRef.current = '';
-                    finalTranscriptRef.current = '';
-                    sessionFinalTranscriptRef.current = '';
-                    sessionBaseTranscriptRef.current = '';
-                }, 1000);
+                    const hasConcept=(concept)=> (CONCEPT_ALIASES[concept]||[concept]).some(a=>{const esc=normalizeSkillText(a).replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\s+/g,'\\s+');return new RegExp(`(^|[^a-z0-9+#])${esc}(?=$|[^a-z0-9+#])`,'i').test(answer);});
+                    const questionText=normalizeSkillText(currentQ.question||''), rawKeypoints=currentQ.keypoints||[];
+                    let expectedConcepts=rawKeypoints.map(k=>normalizeSkillText(k));
+                    if(/supervised.*unsupervised|difference.*supervised/i.test(questionText)) expectedConcepts=['supervised learning','unsupervised learning','labeled data','unlabeled data'];
+                    else if(/overfitting/i.test(questionText)) expectedConcepts=['overfitting','training data','test data'];
+                    else if(/dataset cleaning|missing data/i.test(questionText)) expectedConcepts=['pandas','imputation','feature scaling','outliers'];
+                    const conceptHits=expectedConcepts.map(c=>({concept:c,hit:hasConcept(c)})), hitCount=conceptHits.filter(x=>x.hit).length, ratio=hitCount/Math.max(1,expectedConcepts.length);
+                    const contradictionPatterns=[/\b(supervised learning)\b[^.]{0,80}\b(unlabeled|unlabelled) data\b/i,/\b(unsupervised learning)\b[^.]{0,80}\b(labeled|labelled) data\b/i,/\boverfitting\b[^.]{0,80}\b(improves|increases)\s+(test|unseen)\s+accuracy\b/i,/\b(docker|containerization)\b[^.]{0,80}\bmeans?\s+virtual machine\b/i];
+                    const factualError=contradictionPatterns.some(rx=>rx.test(finalResponse));
+                    const relevance=Math.round(Math.min(100,Math.max(15,ratio*100)));
+                    let technical=Math.round(ratio*100); if(factualError) technical=Math.max(5,technical-45); if(wordCount<6) technical=Math.min(technical,35);
+                    const hasExplanation=/\b(because|therefore|so that|which|for example|for instance|by|using|when|if)\b/i.test(finalResponse);
+                    const completeness=Math.round(Math.min(100,Math.max(10,ratio*70+(wordCount>=35?20:wordCount>=15?10:0)+(hasExplanation?10:0))));
+                    const communication=Math.round(Math.min(100,Math.max(30,wordCount>=15?85:wordCount>=7?70:45)));
+                    const overall=Math.round(technical*.5+relevance*.2+completeness*.2+communication*.1);
+                    let verdict='Needs improvement'; if(factualError) verdict='Factually incorrect'; else if(technical>=80&&relevance>=75&&completeness>=65) verdict='Correct'; else if(technical>=55&&relevance>=55) verdict='Partially correct'; else if(relevance<40) verdict='Not relevant';
+                    const missed=conceptHits.filter(x=>!x.hit).map(x=>x.concept).slice(0,4);
+                    const strengths=verdict==='Correct'?'The response addresses the core concepts and is technically consistent.':verdict==='Partially correct'?'The response contains some relevant concepts, but important parts are missing or under-explained.':verdict==='Factually incorrect'?'The response contains a factual contradiction that needs correction.':'The response does not yet demonstrate enough of the expected concepts.';
+                    let areas=missed.length?`Cover these concepts more clearly: ${missed.join(', ')}.`:'Add a concise explanation or practical example to demonstrate understanding.'; if(factualError) areas='Correct the factual statement first, then explain the concept with a simple example.';
+                    const evalResult={overallScore:overall,verdict,technicalAccuracy:technical,relevance,completeness,communication,keypointsCovered:hitCount,totalKeypoints:expectedConcepts.length,strengths,areasForImprovement:areas,transcript:finalResponse};
+                    setEvaluations(prev=>({...prev,[currentQ.id]:evalResult})); setIsEvaluating(false); setInterviewerStatus(verdict==='Correct'?'Correct. Let’s build on that.':'I’ve evaluated the response. Let’s strengthen the weak area.');
+                    if(verdict!=='Correct'||missingSkills.length>0){const targetTopic=missed[0]||missingSkills[0]||'System Architecture';const adaptiveQ={id:Date.now(),type:'Adaptive Follow-Up',question:`Follow-up on your response: How would you apply ${targetTopic} in a real-world ${targetRole||'target-role'} project?`,keypoints:[targetTopic,'reliability','scalability','monitoring'],category:'Targeted Gap',difficulty:'Hard',isAdaptive:true};setQuestions(prev=>{if(prev.some(q=>q.isAdaptive&&q.question.includes(targetTopic)))return prev;const next=[...prev];next.splice(currentQuestionIndex+1,0,adaptiveQ);return next;});showToast('Adaptive follow-up question added based on the evaluated response.','info');}
+                    setTranscript('');setManualResponseText('');setTextResponseMode(false);liveTranscriptRef.current='';finalTranscriptRef.current='';sessionFinalTranscriptRef.current='';sessionBaseTranscriptRef.current='';
+                },700);
             };
 
             // Enable / Disable Webcam
@@ -1501,6 +1450,14 @@ Challenge Requirements:
                                                     placeholder="Paste target job position details, required tech stack, and responsibilities..."
                                                     className="w-full text-xs p-3 rounded-lg border border-slate-200 focus:ring-2 focus:ring-blue-500 text-slate-800 font-mono bg-slate-50"
                                                 />
+                                                {detectJDContradictions(jobDescription).hasContradictions && (
+                                                    <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-900">
+                                                        <div className="font-bold flex items-center gap-2"><i className="fas fa-triangle-exclamation text-amber-600"></i> Surprise Challenge Flag Detected</div>
+                                                        {detectJDContradictions(jobDescription).items.map((item, idx) => (
+                                                            <div key={idx} className="mt-2"><strong>{item.type}:</strong> {item.evidence}<div className="text-amber-800 mt-0.5">Action: {item.action}</div></div>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -1971,7 +1928,10 @@ Challenge Requirements:
                                         <div className="p-5 bg-white rounded-2xl border border-slate-200 shadow-sm space-y-4">
                                             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
                                                 <h3 className="font-bold text-slate-900 text-sm">How You Performed</h3>
-                                                <span className="text-xs font-bold px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-200">Overall Score: {ev.overallScore}%</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${ev.verdict === 'Correct' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : ev.verdict === 'Partially correct' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>{ev.verdict || 'Evaluated'}</span>
+                                                    <span className="text-xs font-bold px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-full border border-indigo-200">Overall Score: {ev.overallScore}%</span>
+                                                </div>
                                             </div>
                                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
                                                 {[['Technical', ev.technicalAccuracy], ['Relevance', ev.relevance], ['Completeness', ev.completeness], ['Communication', ev.communication]].map(([l, v]) => (
